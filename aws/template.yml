@@ -1,0 +1,198 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Infraestructura serverless para ingesta SRI (S3, IAM, Lambda, Layer, EventBridge).
+  Crea un bucket de datos, función Lambda con Layer y una regla diaria en EventBridge.
+
+Parameters:
+  RegionParam:
+    Type: String
+    Default: eu-west-2
+  DataBucketName:
+    Type: String
+    Description: Nombre del bucket S3 que actuará como Data Lake (raw/metadata/silver/gold)
+    Default: tfm-datalake-2025-milan
+  FunctionName:
+    Type: String
+    Default: tfm-sri-ingesta
+  LayerName:
+    Type: String
+    Default: tfm-dingesta-dependencias
+  RuleName:
+    Type: String
+    Default: run-daily-7am-ecuador-2
+  ArtifactsBucket:
+    Type: String
+    Description: Bucket S3 donde están subidos los artefactos (extraer.zip y layer.zip)
+    Default: artofacts-tfm
+  LambdaCodeKey:
+    Type: String
+    Default: lambda/extraer.zip
+  LayerCodeKey:
+    Type: String
+    Default: layers/python.zip
+  DatasetPrefix:
+    Type: String
+    Default: vehiculos
+  DefaultStart:
+    Type: String
+    Default: '2017'
+  DefaultEnd:
+    Type: String
+    Default: '2025'
+  UserAgent:
+    Type: String
+    Default: 'Mozilla/5.0 (TFM Ecuador Scraper)'
+  TimeZone:
+    Type: String
+    Default: America/Guayaquil
+
+Resources:
+
+  # -------------------------
+  # S3 Data Lake (bucket)
+  # -------------------------
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref DataBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Bucket policy (opcional): asegura control del owner de la cuenta
+  DataBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowBucketOwnerAll
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: 's3:*'
+            Resource:
+              - !Sub arn:aws:s3:::${DataBucketName}
+              - !Sub arn:aws:s3:::${DataBucketName}/*
+
+  # -------------------------
+  # IAM para Lambda
+  # -------------------------
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${FunctionName}-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Logs básicos para Lambda
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  LambdaInlinePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${FunctionName}-inline-s3
+      Roles:
+        - !Ref LambdaRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: S3Access
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:ListBucket
+            Resource:
+              - !Sub arn:aws:s3:::${DataBucketName}
+              - !Sub arn:aws:s3:::${DataBucketName}/*
+
+  # -------------------------
+  # Lambda Layer (dependencias)
+  # -------------------------
+  LambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Ref LayerName
+      CompatibleRuntimes: [ python3.11 ]
+      Description: Dependencias Python para ingesta SRI (requests, bs4, pytz, etc.)
+      Content:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: !Ref LayerCodeKey
+
+  # -------------------------
+  # Lambda Function (ingesta)
+  # -------------------------
+  IngestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Runtime: python3.11
+      Handler: main.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 420
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref ArtifactsBucket
+        S3Key: !Ref LambdaCodeKey
+      Layers:
+        - !Ref LambdaLayer
+      Environment:
+        Variables:
+          USE_S3: "true"
+          S3_BUCKET: !Ref DataBucketName
+          DATASET_PREFIX: !Ref DatasetPrefix
+          DEFAULT_START: !Ref DefaultStart
+          DEFAULT_END: !Ref DefaultEnd
+          USER_AGENT: !Ref UserAgent
+          TZ: !Ref TimeZone
+          REGION: !Ref RegionParam
+
+  # -------------------------
+  # EventBridge (cron diario 12:00 UTC = 07:00 Ecuador)
+  # -------------------------
+  DailyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Ref RuleName
+      ScheduleExpression: cron(0 12 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt IngestFunction.Arn
+          Id: LambdaTarget
+
+  # Permiso para que EventBridge invoque la Lambda
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IngestFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyRule.Arn
+
+Outputs:
+  BucketName:
+    Description: Nombre del bucket S3 de datos
+    Value: !Ref DataBucketName
+  FunctionArn:
+    Description: ARN de la función Lambda de ingesta
+    Value: !GetAtt IngestFunction.Arn
+  RuleArn:
+    Description: ARN de la regla de EventBridge
+    Value: !GetAtt DailyRule.Arn
+  LayerArn:
+    Description: ARN de la versión del Lambda Layer publicado
+    Value: !Ref LambdaLayer

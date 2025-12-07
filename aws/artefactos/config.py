@@ -8,6 +8,12 @@ almacenamiento local y S3 mediante la variable USE_S3.
 
 import os
 from pathlib import Path
+# -----------------------------------------------------------------------------
+# Variables de Configuracion de databricks
+# -----------------------------------------------------------------------------
+DATABRICKS_HOST = os.getenv("DATABRICKS_HOST","")
+DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN","")
+JOB_ID = os.getenv("JOB_ID",0)
 
 # -----------------------------------------------------------------------------
 # URLs base de los datasets del SRI (fuentes oficiales de datos abiertos)

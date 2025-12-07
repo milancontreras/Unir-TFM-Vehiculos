@@ -31,15 +31,18 @@ import os
 from datetime import datetime
 from pathlib import Path
 import pytz
+import json
 
 from config import (
-    DEFAULT_START, DEFAULT_END, OUT_RAW, OUT_META, DATASET_PREFIX, USE_S3, S3_BUCKET, FORCE_DEFAULT
+    DEFAULT_START, DEFAULT_END, OUT_RAW, OUT_META, DATASET_PREFIX, USE_S3, S3_BUCKET, FORCE_DEFAULT,
+    DATABRICKS_HOST, DATABRICKS_TOKEN, JOB_ID
 )
 from utils import get_session, now_ts, existing_year_hashes, sha256_bytes
 from metadata import scrape_metadatos_por_anio
 from downloader import download_csv, save_csv_local, save_csv_s3
 from state_manager import load_state, save_state, touch_checked
 from manifest import ManifestWriter, ManifestEntry
+from databricks_trigger import trigger_databricks_job
 
 def decide_download(force: bool, last_seen_update: str | None, current_meta_update: str | None) -> tuple[bool, str]:
     """
@@ -239,6 +242,28 @@ def main(start: int, end: int, force: bool, metadata_only: bool = False):
 
     print(f"INFO: Total de archivos nuevos descargados: {total_nuevos}")
 
+    # 6) Levantar el trigger para que se ejecute el job en databricks
+    try:
+        result = trigger_databricks_job(DATABRICKS_HOST, DATABRICKS_TOKEN, JOB_ID)
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": f"Trigger Job Databricks lanzado exitosamente (jobId:{JOB_ID})",
+                "databricks_response": result
+            })
+        }
+
+    except Exception as e:
+        print(f"Error en el trigger de Databricks (jobId:{JOB_ID})", str(e))
+
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "error": "Error al lanzar el trigger de Databricks job",
+                "details": str(e)
+            })
+        }
 
 # --- Handler AWS Lambda ---
 def lambda_handler(event, context):

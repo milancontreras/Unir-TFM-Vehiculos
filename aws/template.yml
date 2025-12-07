@@ -45,15 +45,21 @@ Parameters:
   TimeZone:
     Type: String
     Default: America/Guayaquil
-  DataBricksHostName:
+  DatabricksHostName:
     Type: String
     Default: ''
-  DataBricksToken:
+  DatabricksToken:
     Type: String
     Default: ''
-  DataBricksJobId:
+  DatabricksJobId:
     Type: String
     Default: '0'
+  DatabricksExternalIdRoleName:
+    Type: String
+    Default: 'ConexionExternaDatabricks'
+  DatabricksExternalId:
+    Type: String
+    Default: ''
 
 Resources:
 
@@ -90,6 +96,40 @@ Resources:
             Resource:
               - !Sub arn:aws:s3:::${DataBucketName}
               - !Sub arn:aws:s3:::${DataBucketName}/*
+
+  DatabricksS3AccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref DatabricksExternalIdRoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: arn:aws:iam::414351767826:root
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref DatabricksExternalId
+      Policies:
+        - PolicyName: databricks-s3-access-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Leer / crear / modificar / borrar objetos en TODO el bucket
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub arn:aws:s3:::${DataBucketName}/*
+              # Listar el contenido del bucket
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${DataBucketName}
 
   # -------------------------
   # IAM para Lambda
@@ -169,9 +209,9 @@ Resources:
           USER_AGENT: !Ref UserAgent
           TZ: !Ref TimeZone
           REGION: !Ref RegionParam
-          DATABRICKS_HOST: !Ref DataBricksHostName
-          DATABRICKS_TOKEN: !Ref DataBricksToken
-          JOB_ID: !Ref DataBricksJobId
+          DATABRICKS_HOST: !Ref DatabricksHostName
+          DATABRICKS_TOKEN: !Ref DatabricksToken
+          JOB_ID: !Ref DatabricksJobId
 
   # -------------------------
   # EventBridge (cron diario 12:00 UTC = 07:00 Ecuador)

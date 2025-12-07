@@ -45,6 +45,15 @@ Parameters:
   TimeZone:
     Type: String
     Default: America/Guayaquil
+  DataBricksHostName:
+    Type: String
+    Default: ''
+  DataBricksToken:
+    Type: String
+    Default: ''
+  DataBricksJobId:
+    Type: String
+    Default: '0'
 
 Resources:
 
@@ -160,6 +169,9 @@ Resources:
           USER_AGENT: !Ref UserAgent
           TZ: !Ref TimeZone
           REGION: !Ref RegionParam
+          DATABRICKS_HOST: !Ref DataBricksHostName
+          DATABRICKS_TOKEN: !Ref DataBricksToken
+          JOB_ID: !Ref DataBricksJobId
 
   # -------------------------
   # EventBridge (cron diario 12:00 UTC = 07:00 Ecuador)

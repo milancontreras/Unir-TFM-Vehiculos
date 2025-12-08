@@ -1,24 +1,39 @@
 # Manual de preparación recursos para ingesta de archivos
 
 ## Objetivo
-Este procedimiento permite crear un bucket S3 e insertar en él los archivos necesarios para el despliegue del proyecto mediante AWS CloudFormation y Lambda.  
-El proceso se realiza desde **AWS CloudShell**, sin requerir configuraciones locales adicionales.
+Este procedimiento permite levantar los servicios necesarios en AWS y Databricks para el funcionamiento del proyecto
 
 ---
 
 ## Requisitos previos
 
-- Una cuenta AWS con permisos para:
-  - Crear buckets S3.
-  - Subir archivos a S3.
+- Una cuenta AWS con permisos de:
+  - Buckets S3.
+  - IAM.
+  - CloudFormation
+  - Lambda
+  - Amazon EventBridge
 - Acceso a la consola web de AWS.
-- Archivo comprimido `artefactos.zip` que contiene:
-  - `extraer.zip` → código fuente de la función Lambda.
-  - `python.zip` → dependencias del layer.
-  - `template.yml` → plantilla de CloudFormation.
-  - `upload_artifacts.sh` → script de automatización.
+- Acceso al repositorio GitHub `https://github.com/milancontreras/Unir-TFM-Vehiculos.git`
+- Cuenta en Databricks 
+- Tener clonado el repositorio de GitHub  `https://github.com/milancontreras/Unir-TFM-Vehiculos.git` en el Workspace.
 
----
+**Nota:**
+Para el levantamiento del ambiente será necesario el uso de nombres únicos para varias variables. Se recomienda usar los mismos nombres y solo cambiar la parte final con un código único.
+
+Para este ejemplo se usarán los siguientes nombre de variables:
+- \<nombre-del-bucket-artifacts\>: `tfm-s3-artefactos-251207`
+- \<region\>: `eu-west-2` (No cambiar esta variable)
+- \<nombre-del-bucket-de-datos-capa-bronce\>: `tfm-s3-datalake-251207`
+- \<nombre-de-la-funcion-lambda\>: `tfm-fun-ingesta-251207`
+- \<nombre-del-layer\>: `tfm-layer-ingesta-251207`
+- \<nombre-de-la-regla-eventbridge\>: `tfm-automatizacion-diaria-7am-ecuador-251207`
+- \<nombre-pila-cloud-formation\>: `tfm-stack-extraccion-251207 `
+- \<nombre-host-databrciks\>:  Se lo obtienen abriendo el entorno de Databricks y observando la URL y cortarla al final de .com por ejemplo si la URL es `https://dbc-XXXXXX-XXX.cloud.databricks.com/?o=XXXXXXXXXXXXXX` el host será `https://dbc-XXXXXX-XXX.cloud.databricks.com`.  
+
+- \<token-desarrollador-databricks\>: Se lo obtiene en el entorno de databricks dando clic en la parte superior derecha en el usuario y `Settings -> Developer -> Access tokens -> Generate new token`
+- \<nombre-rol-ubicacion-externa-databricks\>: `RolDatabricksExterno-251207`
+- \<nombre-ubicacion-externa-databricks>: `tfm_s3_datalake_externo` (No cambiar esta variable)
 
 ## Pasos para la ejecución
 
@@ -27,186 +42,152 @@ El proceso se realiza desde **AWS CloudShell**, sin requerir configuraciones loc
 2. En la barra superior, haz clic en el ícono **“>_”** (CloudShell).  
 3. Espera a que cargue el entorno (normalmente `/home/cloudshell-user/`).
 
-**Referencia visual:**  
-El entorno mostrará un prompt similar a:
+El entorno mostrará uen pantalla algo similar a:
 ```bash
 cloudshell-user@ip-172-31-xx-xx:~$
 ```
 
-### 2.Subir el archivo artefactos.zip al entorno
-1.	En la barra superior de CloudShell, haz clic en `Acciones > Cargar Archivo`.
-2.	Elige el archivo artefactos.zip desde tu computadora.
-3.	Espera a que termine la carga (se mostrará en el directorio actual).
-
-Verificar que esté presente con:
+### 2.Cargar archivos desde Github
+1.	Ejecutar los comandos.
 ```bash
+git clone --no-checkout https://github.com/milancontreras/Unir-TFM-Vehiculos.git
+cd Unir-TFM-Vehiculos
+git sparse-checkout init --cone
+git sparse-checkout set aws
+git checkout
+```
+
+2.	Verificamos que se hayan descargado los archivos con el comando.
+```bash
+ls
+```
+
+Se observará:
+```bash
+aws README.md
+```
+
+4. Ingresamos a la carpeta aws y mostramos su contenido
+```bash
+cd aws
 ls
 ```
 
 Se debría observar:
 ```bash
-artefactos.zip
+artefactos  Manual.md  python.zip  README.md  template.yml  upload_artifacts.sh
 ```
 
-### 3. Extraer el contenido del ZIP
 
-Ejecuta el siguiente comando para descomprimir el archivo:
-```bash
-unzip artefactos.zip
-```
+### 3. Compresión del contenido de la carpeta artefactos
+Para poder agreagr el código en una función lambda es necesario que este este en un archivo zip. por lo que compimiremos el contendio de la caprte artefactos en el archivo extraer.zip
 
-### 4. Verificar los archivos extraídos
-Confirma que la carpeta de los archivos extraidosse encuentran en el directorio actual:
-```bash
-ls
-```
 
-Se debría observar:
-```bash
-artefactos
-```
-
-Ingresar en la carpeta
+Ejecutamos los siguientes comandos:
 ```bash
 cd artefactos
+zip -r ../extraer.zip .
+cd ..
 ls
 ```
 
-Se debría observar:
+Se puede observar que ahora se tienen el archivo zip:
 ```bash
-extraer.zip  python.zip  template.yml  upload_artifacts.sh
+extraer.zip
 ```
 
-### 5. Dar permisos de ejecución al script
-Antes de ejecutar el script, asegurate de otorgarle permisos de ejecución:
+### 4. Creación de bucket con los archivos necesarios para la creación de los servicios en AWS.
+Para crear todos los servicios de aws como funciones lambda, buckets, roles en IAM, Eventos en EventBridge. Es necesario cargar todos los recursos necesarios y configuraciones inicialmente en un bucket s3. 
+
+
+Ejecutamos el siguiente comando que creará un bucket s3 inicial con las configuraciones y archivos necesarios para la creación de los demás servicios. Recuerda cambiar el nombre de la variable como se mencionó en el apartado de `Requisitos previos`
 ```bash
 chmod +x upload_artifacts.sh
+./upload_artifacts.sh <nombre-del-bucket-artifacts>
 ```
-
-Verifica los permisos:
+Se debría observar el siguiente resultado:
 ```bash
-ls -l upload_artifacts.sh
+[SUCCESS] Todos los artefactos fueron cargados correctamente en <nombre-del-bucket-artifacts>
 ```
 
-Debe mostrarse algo como:
-```bash
--rwxr-xr-x  1 cloudshell-user  staff  2048 Nov  4 12:30 upload_artifacts.sh
-```
+### 5(Opcional). Revisar la creación del bucket en la interfaz gráfica de AWS.
 
-### 6. Ejecutar el script para crear el bucket y subir los archivos
+1. En la interfaz gráfica de AWS nos dirigimos a `Amazon S3 -> <nombre-del-bucket-artifacts>`
+2. Vamos a poder observar que dentro del Bucket S3 se encuentran 3 carpetas `lambda\` que contiene el código para la función lambda, `layers\` que contiene las dependencias necesarias para que funcione el código de la función lambda, y `plantillas\` que contiene la plantilla para el uso de CloudFormation y levantar los recursos necesarios.
 
-Ejecutá el script pasando como parámetro el nombre del bucket S3 donde se almacenarán los artefactos como recomendación usar el nombre `tfm-s3-artefactos-<codigo-unico>`:
-```bash
-./upload_artifacts.sh <nombre-del-bucket>
-```
 
-Ejemplo:
-```bash
-./upload_artifacts.sh tfm-s3-artefactos-12345unir
-```
+### 6. Creación de servicios de AWS mediante CloudFormation
+1. Ejecutamos el siguiente comando tomando en cuenta el nombre de las variables mencionadas en el apartado de `Requisitos previos`.
 
-El script:
--	Crea el bucket (si no existe).
--   Sube los archivos:
-    -   extraer.zip → lambda/extraer.zip
-    -   python.zip → layers/python.zip
-    -   template.yml → plantillas/template.yml
--   Verifica los objetos cargados en S3.
-
-Salida esperada:
-```bash
-[INFO] Subiendo artefactos al bucket...
-upload: ./extraer.zip to s3://tfm-s3-artefactos-12345unir/lambda/extraer.zip
-upload: ./python.zip to s3://tfm-s3-artefactos-12345unir/layers/python.zip
-upload: ./template.yml to s3://tfm-s3-artefactos-12345unir5/plantillas/template.yml
-[SUCCESS] Todos los artefactos fueron cargados correctamente en s3://tfm-s3-artefactos-12345unir
-```
-
-#### Resultado
-```bash
-s3://<nombre-del-bucket>/
-│
-├── lambda/
-│   └── extraer.zip
-│
-├── layers/
-│   └── python.zip
-│
-└── plantillas/
-    └── template.yml
-```
-
-### 7. Crear los recursos necesarios mediante una plantilla
-Ejecutar el siguiente comando en `AWS CloudShell`:
-**Nota:**  Es recomendable usar los siguientes nombres para que se creen los recursos.
-- `<nombre-del-bucket-artifacts> ` usamos el nombre creado en el paso 6 `tfm-s3-artefactos-12345unir` 
-
-- `<region>` -> eu-west-2
-- `<nombre-del-bucket-de-datos>` este es el bucket donde se almacenaran los datos extraidos. `tfm-s3-datalake-12345unir`
-- <nombre-de-la-funcion-lambda> nombre de la funcion lambda -> `tfm-fun-ingesta-12345unir`
-- <nombre-del-layer> nombre del layer que contien las dependecias de la función -> `tfm-layer-ingesta-12345unir`
-- <nombre-de-la-regla-eventbridge> nombre de la regla de automatizacion de la funcion -> `tfm-automatizacion-diaria-7am-ecuador-12345unir`
-- <nombre-del-bucket-artifacts> nombre del bucket creado en el paso 6 -> `tfm-s3-artefactos-12345unir` 
 
 ```bash
 aws cloudformation create-stack \
-  --stack-name <nombre-pila> \
+  --stack-name <nombre-pila-cloud-formation> \
   --template-url https://<nombre-del-bucket-artifacts>.s3.<region>.amazonaws.com/plantillas/template.yml \
   --capabilities CAPABILITY_NAMED_IAM \
-  --region eu-west-2 \
+  --region <region> \
   --parameters \
-    ParameterKey=DataBucketName,ParameterValue=<nombre-del-bucket-de-datos> \
+    ParameterKey=DataBucketName,ParameterValue=<nombre-del-bucket-de-datos-capa-bronce> \
     ParameterKey=FunctionName,ParameterValue=<nombre-de-la-funcion-lambda> \
     ParameterKey=LayerName,ParameterValue=<nombre-del-layer> \
-    ParameterKey=RuleName,ParameterValue=<nombre-de-la-regla-eventbridge> \
+    ParameterKey=RuleName,ParameterValue= <nombre-de-la-regla-eventbridge>\
     ParameterKey=ArtifactsBucket,ParameterValue=<nombre-del-bucket-artifacts> \
     ParameterKey=LambdaCodeKey,ParameterValue=lambda/extraer.zip \
-    ParameterKey=LayerCodeKey,ParameterValue=layers/python.zip
+    ParameterKey=LayerCodeKey,ParameterValue=layers/python.zip \
+    ParameterKey=DatabricksHostName,ParameterValue=<nombre-host-databrciks> \
+    ParameterKey=DatabricksToken,ParameterValue=<token-desarrollador-databricks> \
+    ParameterKey=DatabricksJobId,ParameterValue=0 \
+    ParameterKey=DatabricksExternalIdRoleName,ParameterValue=<nombre-rol-ubicacion-externa-databricks> \
+    ParameterKey=DatabricksExternalId,ParameterValue=0000000a-0a00-00e0-0a0a-a000aa0aa000
 ```
 
-Ejemplo:
-```bash
-aws cloudformation create-stack \
-  --stack-name tfm-stack-extraccion \
-  --template-url https://tfm-s3-artefactos-12345unir.s3.eu-west-2.amazonaws.com/plantillas/template.yml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region eu-west-2 \
-  --parameters \
-    ParameterKey=DataBucketName,ParameterValue=tfm-s3-datalake-12345unir \
-    ParameterKey=FunctionName,ParameterValue=tfm-fun-ingesta-12345unir \
-    ParameterKey=LayerName,ParameterValue=tfm-layer-ingesta-12345unir \
-    ParameterKey=RuleName,ParameterValue=tfm-automatizacion-diaria-7am-ecuador-12345unir \
-    ParameterKey=ArtifactsBucket,ParameterValue=tfm-s3-artefactos-12345unir \
-    ParameterKey=LambdaCodeKey,ParameterValue=lambda/extraer.zip \
-    ParameterKey=LayerCodeKey,ParameterValue=layers/python.zip
-
-```
-
-Verificamos su estado:
+2. Verificamos su estado:
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name <nombre-pila> \
+  --stack-name <nombre-pila-cloud-formation> \
   --region eu-west-2 \
   --query "Stacks[0].StackStatus"
 ```
 
-ejemplo;
-```bash
-aws cloudformation describe-stacks \
-  --stack-name tfm-stack-extraccion \
-  --region eu-west-2 \
-  --query "Stacks[0].StackStatus"
-```
-
-Ejecutamos el comando anterior hasta tener el resultado:
+3.Ejecutamos el comando anterior hasta tener el resultado:
 ```bash
 "CREATE_COMPLETE"
 ```
 
+### 7. Configuración conexión Databricks y S3
+1. Abrimos el entorno Databricks
+2. En el menu lateral izquierno nos dirigimos a `Catalog`
+3. Donde se muestran todos los catálogos damos clic en el ícono `+` y luego en `create an external location`
+4. Seleccionamos la opción `Manual`
+5. Rellenamos los campos de la siguientr forma:
+  - En External location name* colocamos el valor de la variable `<nombre-ubicacion-externa-databricks>`
+  - En URL colocamos `s3://` seguido del valor de la variable `<nombre-del-bucket-de-datos-capa-bronce>`
+  - En Storage credential* seleccionamos la opción de `+ Create new storage credential`
+  - En IAM role (ARN) colocamos en ARN que encontramos en AWS en el araprtado de `IAM -> Roles -> <nombre-rol-ubicacion-externa-databricks> -> Copiar ARN`
 
-### 8. Ejecutar la funcion lambda manualmente
+6. Damos Click en Create y se desplegará una ventana emergente en la cual deberemos copiar el `Trust policy` y copiarlo en el ambiente de AWS en `IAM -> Roles -> <nombre-rol-ubicacion-externa-databricks> -> Relaciones de confianza -> Editar la política de confianza`.
+7. De vuelta en el ambiente de databricks damos clic en `IAM role configured`.
 
-Ejecutar en la consola (es normal que tome aporx 2 min):
+
+
+### 8. Configuración variables en Databricks
+1. En el menú lateral izquierdo nos dirigimos a `Workspace` e ingresamos a la carpeta que fue clonada desde github en este lugar, abrimos el archivo ubicado en `Unir-TFM-Vehiculos/Databricks/Configuraciones/variables_configuraciones` 
+2. Dentro de este archivo en el apartado de `Variables configuracion volumen externo s3 capa bronce` configuramos la variable `bucket_s3_bronce` con `s3://` seguido del valor de la variable `<nombre-del-bucket-de-datos-capa-bronce>`. 
+3. (Opcional) Dentro del mismo archivo se puede revisar la configuración de variables como nombres de jobs a crearse y correos a donde llegaran las notificaciones del job. Si no se modifican estos tomarán los valores por defecto.
+4. Abrimos el notebook `Unir-TFM-Vehiculos/Databricks/ConstruirAmbiente` y lo ejecutamos todas sus celdas. Esto creará dos jobs el de Levantar Ambiente que se ejecutará automáticamente y un job para cargar los datos desde bronce y llevarlos a plata y oro.  
+Al final del notebook tendremos un mensaje como este: `Nuevo job creado con ID: XXXXXXXXXXXXXXX`. El cual deberá ser guardado ya que será utilizado en un paso más adelante.
+5. En el menu izquierdo abriremos `Jobs & Pipelines` y esperaremos a que el Job de `Levantar Ambiente` haya terminado su ejecución de forma exitosa. 
+
+
+### 9. Configurar variable de entorno de JobId en la funcion Lambda de AWS
+1. En AWS nos dirigimos a la función lambda `Lambda -> Funciones -> <nombre-de-la-funcion-lambda> -> Configuración -> Variables de entorno -> Editar`
+2. En la variable `JOB_ID` colocaremos el ID que nos dió el notebook de databricks en el anterior punto. Y damos clic en `Guardar`.
+
+
+### 10. (Opcional) Ejecutar la funcion lambda manualmente
+Hasta este punto el proceso ya se ha levantado exitosamente y no es necesario ejecutar manualmente nada. Sin embargo, si se quiere dar una primera ejecución manual, se deben seguir los siguientes pasos.
+
+1. En la consola de AWS   ejecutar el siguiente comando (es normal que tome aprox 2 min):
 ```bash
 aws lambda invoke \
   --function-name <nombre-de-la-funcion-lambda> \
@@ -215,16 +196,8 @@ aws lambda invoke \
   output.json
   ``` 
 
-Ejemplo:
-```bash
-aws lambda invoke \
-  --function-name tfm-fun-ingesta-12345unir \
-  --payload '{}' \
-  --cli-binary-format raw-in-base64-out \
-  output.json
-``` 
-
 #### Resultado
+1. Como resultado, dentro del ambiente de AWS se van a cargar los archivos en el bucket S3 de la siguiente forma.
 ```bash
 s3://<nombre-del-bucket-de-datos>/
 │
@@ -246,3 +219,4 @@ s3://<nombre-del-bucket-de-datos>/
         ...   
 
 ```
+2. En el ambiente de databricks el job del Flujo de carga de las capas `Bronce -> Plata -> Oro` se ejecutará y una vez finalizado los datos estarán disponibles en la capa Oro.
